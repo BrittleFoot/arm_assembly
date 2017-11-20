@@ -1,0 +1,1 @@
+/home/buft/e/linaro/bin/arm-linux-gnueabihf-gcc -mcpu=cortex-a7 -mtune=arm10tdmi -mfpu=neon $*
