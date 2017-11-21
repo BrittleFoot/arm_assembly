@@ -2,40 +2,17 @@
 #ifndef CHAT_S
 #define CHAT_S
 
-#include "printlib.S"
+#include "bufferedoutput.S"
+#include "ring_buffer.S"
 #include "console.S"
 #include "macro.S"
+#include "uart.S"
+#include "size.S"
 #include "mem.S"
-
-#define  UART_BASE_ADDR 0x01C28000
-#define  CCU_BASE_ADDR  0x01C20000
-
-#define  UART0_OFFSET   0x000
-#define  UART1_OFFSET   0x400
-#define  UART2_OFFSET   0x800
-#define  UART3_OFFSET   0xC00
-
-#define  UART0_BIT      16
-#define  UART1_BIT      17
-#define  UART2_BIT      18
-#define  UART3_BIT      19
-
-#define  BUS_CLOCK_GATING3  0x006C
-#define  BUS_SOFT_REG4      0x02D8
-
-#define DLAB_ON             0b10000011
-#define DLAB_OFF            0b10000000
-
-#define UART_RECV_BUF       0x0000
-#define UART_DIV_LOW        0x0000
-#define UART_DIV_HIGH       0x0004
-#define UART_LINE_CTRL      0x000C
-#define UART_LINE_STATUS    0x0014
 
 #define STDIN               0
 #define STDOUT              1
 #define STDERR              2
-
 
 .global main
 
@@ -72,21 +49,8 @@ main:
     mul     r2, r2, r1
     str     r2, [r3]
 
-
-    ldr     r0, =UART_BASE_ADDR
-    bl      mem_mmap
-    cmp     r0, #-1
-    beq     mmap_error
-    ldr     r1, =uart_regs
-    str     r0, [r1]
-
-    ldr     r0, =CCU_BASE_ADDR
-    bl      mem_mmap
-    cmp     r0, #-1
-    beq     mmap_error
-    ldr     r1, =ccu_regs
-    str     r0, [r1]
-
+    bl      canon
+    bl      uart_init
 
     ldr     r0, =sender
     ldr     r0, [r0]
@@ -100,178 +64,152 @@ main:
     bl      init_ccu
     bl      init_uart
 
+    ldr     r2, =reciver
+    ldr     r2, [r2]
+    mov     r0, r2
+    bl      uart_read
 
-    ldr     r4, =hello
 
     loop:
 
-        try_recv:
-            ldr r2, =reciver
-            ldr r2, [r2]
+        bl  handle_stdin
+        bl  handle_sending
+        bl  handle_reciving
 
-            mov r0, r2
-            bl  uart_hit
-            beq try_send
-
-            mov r0, r2
-            bl  uart_read
-            tst r0, r0
-            beq break
-
-            bl  putchar
-
-        try_send:
-            ldr     r2, =sender
-            ldr     r2, [r2]
-
-            mov     r0, r2
-            bl      uart_sent_available
-            beq     loop
-
-            mov     r0, r2
-            ldrb    r1, [r4], #1
-            bl      uart_write
-            cmp     r1, #0
-            ldreq   r4, =hello
-
+        bl  draw_gui
+        mov r0, #STDIN
+        bl  b_flush
+        ldr r0, =1000
+        bl  usleep
 
         b   loop
 
     break:
 
 
-    bl      mem_close
+    bl      uart_close
+    bl      decanon
+
     pop     {pc}
 
 .ltorg
 
 
-uart_hit:
-@ r0 - uart number
-    push    {r1-r3, lr}
+handle_stdin:
+    push    {lr}
 
-    ldr     r1, =uart_regs
-    ldr     r1, [r1]
+    bl      kbhit
+    cmp     r0, #0
+    beq     dont_read
 
-    ldr     r2, =UART_LINE_STATUS
-    add     r2, r2, r0
+    mov     r0, #STDIN
+    ldr     r1, =in_buffer
+    mov     r2, #0x100
+    mov     r7, #3
+    svc     #0
 
-    ldr     r3, [r1, r2]
-
-    and     r3, r3, #1
-    cmp     r3, #0
-
-    pop     {r1-r3, pc}
-
-.ltorg
+    mov     r1, r0
+    ldr     r0, =in_buffer
+    bl      rb_put_n
 
 
-uart_read:
-@ r0 - uart_number
-    push    {r1-r3, lr}
-
-    ldr     r1, =uart_regs
-    ldr     r1, [r1]
-
-    ldr     r0, [r1, r0]
-
-    pop     {r1-r3, pc}
-
+    dont_read:
+    pop     {pc}
 
 .ltorg
 
 
-uart_sent_available:
-@ r0 - uart number
-    push    {r1-r3, lr}
-
-    ldr     r1, =uart_regs
-    ldr     r1, [r1]
-
-    ldr     r2, =UART_LINE_STATUS
-    add     r2, r2, r0
-
-    ldr     r3, [r1, r2]
-
-    and     r3, r3, #0b100000
-    cmp     r3, #0
-
-    pop     {r1-r3, pc}
-
-.ltorg
-
-
-uart_write:
-@ r0 - uart_number
-@ r1 - char
-    push    {r2, lr}
-
-    ldr     r2, =uart_regs
+handle_sending:
+    push    {lr}
+    
+    ldr     r2, =sender
     ldr     r2, [r2]
-    str     r1, [r2, r0]
 
-    pop     {r2, pc}
+    mov     r0, r2
+    bl      uart_sent_available
+    beq     1f
 
+    invoke  rb_get, r1
+    cmp     r1, #-1
+    beq     1f
 
-init_uart:
-@ r0 - uart number
-    push    {r0-r4, lr}
+    mov     r0, r2
+    bl      uart_write
 
-    ldr     r1, =uart_regs
-    ldr     r1, [r1]
-
-    ldr     r2, =UART_LINE_CTRL
-    add     r2, r2, r0
-    ldr     r3, [r1, r2]
-    ldr     r4, =DLAB_ON
-    orr     r3, r3, r4
-    str     r3, [r1, r2]
-
-    ldr     r2, =UART_DIV_LOW
-    add     r2, r2, r0
-    mov     r3, #13
-    str     r3, [r1, r2]
-
-    ldr     r2, =UART_DIV_HIGH
-    add     r2, r2, r0
-    mov     r3, #0
-    str     r3, [r1, r2]
-
-    ldr     r2, =UART_LINE_CTRL
-    add     r2, r2, r0
-    ldr     r3, [r1, r2]
-    ldr     r4, =DLAB_OFF
-    bic     r3, r3, r4
-    str     r3, [r1, r2]
-
-    pop     {r0-r4, pc}
+    1: pop  {pc}
 
 .ltorg
 
 
-init_ccu:
-@ r0 - uart_number
-    push    {r0-r2, lr}
-    lsl     r0, r0, #10
-    add     r0, r0, #UART0_BIT
+handle_reciving:
+    push    {r0, lr}
 
+    ldr     r2, =reciver
+    ldr     r2, [r2]
+    mov     r0, r2
+    bl      uart_hit
+    beq     1f
+
+    mov     r0, r2
+    bl      uart_read
+
+    ldr     r1, =letter_slot
+    strb    r0, [r1]
+    putstr  letter_slot
+
+    1: pop  {r0, pc}
+
+.ltorg
+
+
+draw_gui:
+    push    {lr}
+
+    putstr  push_display
+
+    bl      getsize
+    mov     r5, r0
+    mov     r6, r1
+
+    sub     r1, r1, #2
+    move_cursor_to r1, #0
+    set_attr #33
+    mov     r1, r5
+    mov     r0, #42
+    bl      fill
+
+    sub     r1, r6, #1
+    move_cursor_to r1, #0
+    set_attr #1
+    putstring "# <send> # > "
+    set_attr #0
+
+    putstr  pop_display
+    
+
+    pop     {pc}
+
+.ltorg
+
+
+
+fill:
+    push    {lr}
+
+    mov     r3, r1
+    ldr     r2, =letter_slot
+    strb    r0, [r2]
+    mov     r0, r2
     mov     r1, #1
-    lsl     r0, r1, r0
+    1:
+        bl      b_write
+        subs    r3, r3, #1
+        bne     1b
 
-    ldr     r1, =ccu_regs
-    ldr     r1, [r1]
-
-    ldr     r2, [r1, #BUS_CLOCK_GATING3]
-    orr     r2, r2, r0
-    str     r2, [r1, #BUS_CLOCK_GATING3]
-
-    ldr     r2, [r1, #BUS_SOFT_REG4]
-    orr     r2, r2, r0
-    str     r2, [r1, #BUS_SOFT_REG4]
-
-    pop     {r0-r2, pc}
+    pop     {pc}
 
 .ltorg
+
 
 
 mmap_error:
@@ -280,7 +218,8 @@ mmap_error:
 
 
 usage:
-    putstring   "Usage: chat.S <sender_uart> <reciver_uart>\n"
+    putstring   "Usage: chat.S <sender_interface_num> <reciver_interface_num>\n"
+    putstring   "\t<*_interface_num> must be 0, 1, 2 or 3 -- uart number\n"
     pop         {pc}
 
 
@@ -292,12 +231,17 @@ uart_out_of_range:
 
 .data
 
-    sender:     .word 0
-    reciver:    .word 0
+    sender:         .word 0
+    reciver:        .word 0
+    letter_slot:    .word 0
+    lletter_slot    = 1
 
-    uart_regs:  .word 0
-    ccu_regs:   .word 0
+    in_buffer:      .space  0x100, 0
+    lin_buffer      = 0x100
 
-    hello:      .asciz "Hello, World!\nAnd somebody else!\n"
+    input_length:   .word  0
+    input_line:     .space 0x1000, 0
+
+    hello:          .asciz "Hello, World!\nAnd somebody else!\n"
 
 #endif
