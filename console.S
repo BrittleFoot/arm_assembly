@@ -108,10 +108,12 @@ kbhit:
 
 .data
 
-string push_display, "\0337"
-string pop_display,  "\0338"
+string push_display,    "\0337"
+string pop_display,     "\0338"
+string save_cursor,     "\033[s"
+string restore_cursor,  "\033[u"
 
-string cls_h,        "\x1B[2J\x1B[H"
+string cls_h,           "\x1B[2J\x1B[H"
 
 
 #endif

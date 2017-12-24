@@ -139,6 +139,14 @@ _clear_buffer:
     pop  { r0-r2 }
 .endm
 
+.macro putb a
+    push { r0-r2 }
+    mov  r0, \a
+    mov  r1, #1
+    bl   print_int
+    pop  { r0-r2 }
+.endm
+
 .macro putz a, z
     push { r0-r2 }
     mov  r0, \a
@@ -157,8 +165,10 @@ _clear_buffer:
 .endm
 
 .macro flush 
+    push    {r0}
     mov     r0, #1
     bl      b_flush
+    pop     {r0}
 .endm
 
 

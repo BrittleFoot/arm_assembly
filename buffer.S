@@ -122,6 +122,6 @@ b_clear:
 b_position:     .word   0
 
 .bss
-b_buffer:         .space  0x100000
+b_buffer:         .space  0x10000000
 
 #endif
