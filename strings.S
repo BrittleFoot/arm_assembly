@@ -139,5 +139,21 @@ asciz_print:
 .ltorg
 
 
+asciz_cpy:
+@ r0  target
+@ r1  destination
+    push    {r0-r2, lr}
+
+    1:  ldrb    r2, [r0], #1
+        strb    r2, [r1], #1
+
+        cmp     r2, #0
+        bne     1b
+    
+
+    pop     {r0-r2, pc}
+
+.ltorg
+
 
 #endif

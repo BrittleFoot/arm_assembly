@@ -115,6 +115,22 @@ log_write_bytes:
 
 99: pop     {r0-r4, pc}
 
+
+log_write_asciz:
+@ r0 - log obj
+@ r1 - char *
+    push    {r0-r4, lr}
+
+    mov     r4, r1
+
+    1:  ldrb    r1, [r4], #1
+        cmp     r1, #0
+        beq     99f        
+        bl      log_write_byte
+        b       1b
+
+99: pop     {r0-r4, pc}
+
 .ltorg
 
     log_str_ofst = 0

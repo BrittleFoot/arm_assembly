@@ -7,6 +7,21 @@
 
 .text
 
+
+mem_fill:
+@ r0 -&gt; offset
+@ r1 -&gt; size
+@ r2 -&gt; fill value
+    push    {r1, r2, lr}
+
+    1:  strb    r2, [r0], #1
+        subs    r1, r1, #1
+        bne     1b
+
+    pop     {r1, r2, pc}
+
+
+
 mem_open:
 @ r0 -&gt; memory offset to open
     push    {r1, r7, lr}

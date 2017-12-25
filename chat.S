@@ -4,6 +4,7 @@
 
 #include "bufferedoutput.S"
 #include "ring_buffer.S"
+#include "protocol.S"
 #include "console.S"
 #include "global.S"
 #include "timer.S"
@@ -13,9 +14,9 @@
 #include "mem.S"
 #include "log.S"
 
-#define STDIN               0
-#define STDOUT              1
-#define STDERR              2
+#define STDIN  0
+#define STDOUT 1
+#define STDERR 2
 
 .global main
 
@@ -70,13 +71,22 @@ main:
     mov     r0, r2
     bl      uart_read
 
+    ldr     r0, =user_init_name
+    ldr     r1, =user_name
+    bl      asciz_cpy
+
+    ldr     r0, =mate_init_name
+    ldr     r1, =mate_name
+    bl      asciz_cpy
+
+
     loop:
 
         bl      handle_stdin
         bl      handle_sending
         bl      handle_receiving
 
-        ldr     r1, =50000
+        ldr     r1, =80000
         each    flush_timer, r1, 1f
 
         bl      draw_cui
@@ -129,16 +139,75 @@ handle_stdin:
 
     log_getline     input_log, r5
 
-    bl      b_writez
     mov     r1, r0 
     invoke  asciz_len, r1
+
     cmp     r1, #0
-    beq     2f
-    bl      rb_put_n
-2:  mov     r0, #0x0A
-    bl      rb_put
+    beq     99f
+
+    bl      process_ready_input
 
 99: pop     {pc}
+
+.ltorg
+
+
+process_ready_input:
+@ r0 char *input
+@ r1 int   input_length
+    push    {r0-r1, lr}
+
+    push    {r0-r1}
+    ldr     r0, =global_log
+    ldr     r1, =user_name
+    bl      log_write_asciz
+
+    mov     r1, #58     @ ':'
+    bl      log_write_byte
+    mov     r1, #0x20   @ ' '
+    bl      log_write_byte
+
+    pop     {r0-r1}
+
+    push    {r0, r1}
+
+    ldr     r2, =slash_pattern
+    mov     r3, #1
+    bl      starts_with
+    cmp     r4, #1
+    beq     1f
+
+    ldr     r0, =CMD_MSG
+    ldr     r1, =CMD_MSG_LEN
+    bl      rb_put_n
+
+    mov     r2, r1
+    mov     r1, r0
+    ldr     r0, =global_log
+    bl      log_write_bytes
+
+1:  pop     {r0, r1}
+    bl      rb_put_n
+
+    mov     r2, r1
+    mov     r1, r0
+    ldr     r0, =global_log
+    bl      log_write_bytes
+
+    mov     r0, #0x0A
+    bl      rb_put
+
+    mov     r1, r0
+    ldr     r0, =global_log
+    bl      log_write_byte
+
+    mov     r0, #0x00
+    bl      rb_put
+
+    g_add   send_button, #4
+    
+
+99: pop     {r0-r1, pc}
 
 .ltorg
 
@@ -150,11 +219,7 @@ handle_sending:
     ldr     r2, [r2]
 
 
-    1:  bl      rb_line_ready
-        cmp     r0, #0
-        beq     99f
-
-        mov     r0, r2
+    1:  mov     r0, r2
         bl      uart_sent_available
         beq     99f
 
@@ -182,12 +247,55 @@ handle_receiving:
 
     mov     r0, r2
     bl      uart_read
-
     mov     r1, r0
-    ldr     r0, =recv_log
+
+    g_get   line_ready
+    cmp     r0, #-1
+    beq     3f
+
+    log_getline recv_log, r0
+    bl      process_ready_recv
+    g_set   line_ready, #-1
+    b       4f
+
+3:  ldr     r0, =recv_log
     bl      log_write_byte
 
+4:  cmp     r1, #0x0A
+    bne     2f
+
+    log_str recv_log
+    sub     r0, r0, #1
+    g_set   line_ready, r0
+
+2:  g_add   recv_button, #1
+
 1:  pop     {r0, pc}
+
+.ltorg
+
+
+process_ready_recv:
+@ r0 char *recved_line
+    push    {r0-r4, lr}
+
+    mov     r1, r0
+    ldr     r0, =global_log
+
+    push    {r1}
+    ldr     r1, =mate_name
+    bl      log_write_asciz
+    mov     r1, #58
+    bl      log_write_byte
+    mov     r1, #0x20
+    bl      log_write_byte
+    pop     {r1}
+
+    bl      log_write_asciz
+    mov     r1, #0x0A
+    bl      log_write_byte
+
+    pop     {r0-r4, pc}
 
 .ltorg
     
@@ -208,13 +316,35 @@ draw_cui:
     sub             r1, r6, #2
     move_cursor_to  r1, #0
     set_attr        #33
-    mov             r1, r5
+
+    @   recv button beep
+    g_get           recv_button
+    cmp             r0, #0
+    ble             12f
+
+    g_sub           recv_button, #1
+    set_attr        #31
+
+12: mov             r1, r5
     mov             r0, #42
     bl              fill
 
+    set_attr        #33
+
+
     sub             r1, r6, #1
     move_cursor_to  r1, #0
-    set_attr        #1
+
+    @   send button beep
+
+    g_get           send_button
+    cmp             r0, #0
+    ble             11f
+
+    g_sub           send_button, #1
+    set_attr        #34
+
+11: set_attr        #1
     putstring       "# <send> # > "
 
     set_attr        #0
@@ -224,30 +354,47 @@ draw_cui:
     mov             r0, r1
     bl              b_writez
 
-
 99: pop             {pc}
 
 .ltorg
 
 
 write_log:
-    push        {lr}
-    log_str     recv_log
-    mov         r2, r0
-    ldr         r1, =log_rec_size
-    log_data    recv_log
+    push        {r0-r8, lr}
+    log_str     global_log
+    mov         r5, r0
+    ldr         r6, =log_rec_size
+    log_data    global_log
 
-    cmp         r2, #0
+    cmp         r5, #0
     beq         99f     
 
-98: bl          b_writez
-    putstring   "\n"
-    add         r0, r0, r1
-    subs        r2, r2, #1
-    bne         98b
+    98: @ for r0 = char *log_sting in recv_log:
+        @ r5     -> counter 
+
+        @ ldr     r1, =0xFFFF
+        @ ldr     r2, =slash_pattern
+        @ mov     r3, #1
+        @ bl      find_first
+        @ add     r1, r0, r4
+        @ mov     r2, r1
+
+        @ invoke  asciz_len, r2
+        @ cmp     r2, #0
+        @ beq     42f
+        mov     r1, r0
+        invoke  b_writez, r1
+        putstring   "\n"
+
+    42: ldr         r6, =log_rec_size
+        add         r0, r0, r6
+
+        subs        r5, r5, #1
+        bne         98b
 
     putstring   "\n\n\n\n"
-99: pop         {pc}
+
+99: pop         {r0-r8, pc}
 
 .ltorg
 
@@ -277,8 +424,8 @@ mmap_error:
 
 
 usage:
-    putstring   "Usage: chat.S <sender_interface_num> <receiver_interface_num>\n"
-    putstring   "\t`*_interface_num` must be 0, 1, 2 or 3 a.k.a. uart number\n"
+    putstring   "Usage: chat.S <sender_num> <receiver_num>\n"
+    putstring   "\t`*_num` must be 0, 1, 2 or 3 a.k.a. uart number\n"
     b exit
 
 
@@ -295,13 +442,30 @@ exit:
 
 .data
 
+    checksum:       .word 0
+
     sender:         .word 0
     receiver:       .word 0
     letter_slot:    .word 0
     lletter_slot    = 1
 
+    line_ready:     .word -1
+
     flush_timer:    .word 0
     blink_timer:    .word 0
+
+    send_button:    .word 0
+    recv_button:    .word 0
+
+    slash_pattern:  .ascii "/"
+
+
+    user_name:      .space  0x100, 0
+    mate_name:      .space  0x100, 0
+
+
+    user_init_name: .asciz "You"
+    mate_init_name: .asciz "Mate"
 
 .bss
 
@@ -310,7 +474,6 @@ exit:
 
     input_length:   .word  0
     input_line:     .space 0x1000, 0
-
     
 recv_log:
    .word  0
@@ -322,5 +485,10 @@ input_log:
    .word  0
    .space 0x100000, 0
 
+
+global_log:
+   .word  0
+   .word  0
+   .space 0x100000, 0
 
 #endif
