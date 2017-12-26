@@ -158,6 +158,10 @@ process_ready_input:
     push    {r0-r1, lr}
 
     push    {r0-r1}
+
+    ldr     r1, =user_name
+    bl      change_name_if_nedded
+
     ldr     r0, =global_log
     ldr     r1, =user_name
     bl      log_write_asciz
@@ -279,6 +283,10 @@ process_ready_recv:
 @ r0 char *recved_line
     push    {r0-r4, lr}
 
+    bl      send_ok_if_nedded
+    ldr     r1, =mate_name
+    bl      change_name_if_nedded
+
     mov     r1, r0
     ldr     r0, =global_log
 
@@ -298,7 +306,58 @@ process_ready_recv:
     pop     {r0-r4, pc}
 
 .ltorg
+
+
+send_ok_if_nedded:
+    push    {r0-r4, lr}
+
+    ldr     r1, =0xFFFF
+    ldr     r2, =CMD_MSG
+    ldr     r3, =CMD_MSG_LEN
+    bl      find_first
+    add     r0, r0, r4
+    bl      asciz_len
+
+    cmp     r0, #0
+    beq     99f
+
+    ldr     r0, =CMD_OK
+    ldr     r1, =CMD_OK_LEN
+    bl      rb_put_n
+    mov     r0, #0x0A
+    bl      rb_put
+    mov     r0, #0x00
+    bl      rb_put
+
+99: pop     {r0-r4, pc}
+
+.ltorg
     
+
+change_name_if_nedded:
+    push    {r0-r5, lr}
+    mov     r5, r1
+
+    ldr     r1, =0xFFFF
+    ldr     r2, =CMD_NAME
+    ldr     r3, =CMD_NAME_LEN
+    bl      find_first
+    add     r0, r0, r4
+    mov     r1, r0
+
+    invoke  asciz_len, r1
+
+    cmp     r1, #0
+    beq     99f
+
+    add     r0, r0, r3
+    mov     r1, r5
+    bl      asciz_cpy
+
+99: pop     {r0-r5, pc}
+
+.ltorg
+
 
 draw_cui:
     push            {lr}
@@ -345,7 +404,10 @@ draw_cui:
     set_attr        #34
 
 11: set_attr        #1
-    putstring       "# <send> # > "
+    putstring       "# <"
+    ldr             r0, =user_name
+    bl              b_writez
+    putstring       "> # > "
 
     set_attr        #0
 
@@ -372,20 +434,18 @@ write_log:
     98: @ for r0 = char *log_sting in recv_log:
         @ r5     -> counter 
 
-        @ ldr     r1, =0xFFFF
-        @ ldr     r2, =slash_pattern
-        @ mov     r3, #1
-        @ bl      find_first
-        @ add     r1, r0, r4
-        @ mov     r2, r1
+        ldr     r1, =0xFFFF
+        ldr     r2, =CMD_MSG
+        ldr     r3, =CMD_MSG_LEN
+        bl      find_first
+        add     r2, r0, r4
 
-        @ invoke  asciz_len, r2
-        @ cmp     r2, #0
-        @ beq     42f
-        mov     r1, r0
-        invoke  b_writez, r1
-        putstring   "\n"
+        invoke  asciz_len, r2
+        cmp     r2, #0
+        beq     42f
 
+        bl      write_msg_line
+        
     42: ldr         r6, =log_rec_size
         add         r0, r0, r6
 
@@ -395,6 +455,31 @@ write_log:
     putstring   "\n\n\n\n"
 
 99: pop         {r0-r8, pc}
+
+.ltorg
+
+
+
+write_msg_line:
+@ r0 char *line
+@ r4 first occurence of /
+    push    {r0-r4, lr}
+
+    sub     r1, r4, #2
+    bl      b_write
+
+    putstring   ": "
+
+    ldr     r3, =CMD_MSG_LEN
+    add     r0, r0, r4
+    add     r0, r0, r3
+    bl      b_writez
+
+
+
+    putstring   "\n"
+
+    pop     {r0-r4, pc}
 
 .ltorg
 
@@ -466,6 +551,7 @@ exit:
 
     user_init_name: .asciz "You"
     mate_init_name: .asciz "Mate"
+
 
 .bss
 
