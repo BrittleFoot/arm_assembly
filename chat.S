@@ -86,12 +86,16 @@ main:
         bl      handle_sending
         bl      handle_receiving
 
-        ldr     r1, =80000
+        ldr     r1, =50000
         each    flush_timer, r1, 1f
 
         bl      draw_cui
         mov     r0, #STDIN
         bl      b_flush
+
+        mov     r1, #10
+        each    sync_timer, r1, 1f
+        bl      handle_syncs
 
     1:  bl      b_clear
         b       loop
@@ -240,6 +244,26 @@ handle_sending:
 .ltorg
 
 
+handle_syncs:
+    push    {lr}
+
+    g_get   rb_lr
+    cmp     r0, #0
+    bne     99f
+
+    ldr     r0, =CMD_SYNC
+    ldr     r1, =CMD_SYNC_LEN
+    bl      rb_put_n
+    mov     r0, #0x0A
+    bl      rb_put
+    mov     r0, #0x00
+    bl      rb_put
+
+99: pop     {pc}
+
+.ltorg
+
+
 handle_receiving:
     push    {r0, lr}
 
@@ -378,10 +402,10 @@ draw_cui:
 
     @   recv button beep
     g_get           recv_button
-    cmp             r0, #0
+    cmp             r0, #1
     ble             12f
 
-    g_sub           recv_button, #1
+    g_sub           recv_button, #2
     set_attr        #31
 
 12: mov             r1, r5
@@ -421,6 +445,8 @@ draw_cui:
 .ltorg
 
 
+#ifndef DEBUG
+
 write_log:
     push        {r0-r8, lr}
     log_str     global_log
@@ -446,11 +472,11 @@ write_log:
 
         bl      write_msg_line
         
-    42: ldr         r6, =log_rec_size
-        add         r0, r0, r6
+    42: ldr     r6, =log_rec_size
+        add     r0, r0, r6
 
-        subs        r5, r5, #1
-        bne         98b
+        subs    r5, r5, #1
+        bne     98b
 
     putstring   "\n\n\n\n"
 
@@ -458,6 +484,38 @@ write_log:
 
 .ltorg
 
+
+#else
+
+write_log:
+    push        {r0-r8, lr}
+    log_str     global_log
+    mov         r5, r0
+    ldr         r6, =log_rec_size
+    log_data    global_log
+
+    cmp         r5, #0
+    beq         99f     
+
+    98: @ for r0 = char *log_sting in recv_log:
+        @ r5     -> counter 
+
+        bl          b_writez
+        putstring   "\n"
+        
+    42: ldr     r6, =log_rec_size
+        add     r0, r0, r6
+
+        subs    r5, r5, #1
+        bne     98b
+
+    putstring   "\n\n\n\n"
+
+99: pop         {r0-r8, pc}
+
+.ltorg
+
+#endif
 
 
 write_msg_line:
@@ -538,6 +596,7 @@ exit:
 
     flush_timer:    .word 0
     blink_timer:    .word 0
+    sync_timer:     .word 0
 
     send_button:    .word 0
     recv_button:    .word 0
